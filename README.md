@@ -1,10 +1,10 @@
 # Periodic File Backup
 
-`periodic-file-backup` is a small Windows GUI app for periodically copying tiny tracked files into a backup folder. It is written in Python with `tkinter` and can be packaged as a single `.exe` with PyInstaller.
-
-## Purpose
+`periodic-file-backup` is a small Windows GUI app for periodically copying tiny tracked files into a backup folder.
 
 The app watches files matched by a glob pattern, periodically checks for files modified since the previous in-memory period, and copies new file contents to a destination folder. It deduplicates backups by SHA-256 file-content hash, not by filename.
+
+It is written in Python with `tkinter` and can be packaged as a single `.exe` with PyInstaller.
 
 ## Runtime Files
 
@@ -31,7 +31,7 @@ Settings are stored as JSON:
 
 Fields:
 
-- `tracked`: required glob pattern, for example `C:\Users\master\AppData\LocalLow\Pixel Sprout Studios\Sun Haven\Saves\Backups\Akai*`.
+- `tracked`: required glob pattern, for example `C:\Users\XXX\AppData\FolderA\FolderB\prefix*`.
 - `destination`: required backup folder. Defaults to the folder containing the app.
 - `size_limit_mb`: number of MB allowed per tracked file. Default is `10`. If `0`, there is no size limit. If a tracked file is at or above the limit, the app logs an error and skips it.
 - `period_minutes`: number of minutes between syncs. Default is `5`.
@@ -135,7 +135,7 @@ Use the bundled environment:
 
 ```powershell
 .\env\python.exe -m unittest -v
-.\env\Scripts\pyinstaller.exe --onefile --windowed --name periodic-file-backup gui.py
+.\env\Scripts\pyinstaller.exe periodic-file-backup.spec
 ```
 
 The built executable is created at:
