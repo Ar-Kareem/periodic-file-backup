@@ -63,6 +63,9 @@ Below the info rows, the main window also has:
 - scrolling log textbox that always scrolls to the bottom.
 - shortened Tracked and Destination values ending in `...` when needed.
 - hover tooltips on the Tracked and Destination values showing the full path/pattern.
+- minimizing the main window hides it in the Windows system tray.
+- double-clicking the tray icon restores the window.
+- right-clicking the tray icon shows `Open` and `Exit`.
 
 ## Sync Behavior
 

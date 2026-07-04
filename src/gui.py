@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import queue
 import sys
 import threading
@@ -8,6 +9,7 @@ import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
+from ctypes import wintypes
 
 from src.core import (
     Settings,
@@ -100,6 +102,265 @@ class Tooltip:
             self.tip = None
 
 
+if sys.platform == "win32":
+    LRESULT = ctypes.c_longlong
+    HANDLE = wintypes.HANDLE
+
+    WNDPROCTYPE = ctypes.WINFUNCTYPE(
+        LRESULT,
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    )
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", WNDPROCTYPE),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", HANDLE),
+            ("hCursor", HANDLE),
+            ("hbrBackground", HANDLE),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    class NOTIFYICONDATAW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("hWnd", wintypes.HWND),
+            ("uID", wintypes.UINT),
+            ("uFlags", wintypes.UINT),
+            ("uCallbackMessage", wintypes.UINT),
+            ("hIcon", HANDLE),
+            ("szTip", wintypes.WCHAR * 64),
+        ]
+
+
+class WindowsTrayIcon:
+    WM_TRAYICON = 0x8000 + 20
+    WM_NULL = 0x0000
+    WM_LBUTTONDBLCLK = 0x0203
+    WM_RBUTTONUP = 0x0205
+    WM_DESTROY = 0x0002
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x0010
+    LR_DEFAULTSIZE = 0x0040
+    NIM_ADD = 0
+    NIM_DELETE = 2
+    NIF_MESSAGE = 0x0001
+    NIF_ICON = 0x0002
+    NIF_TIP = 0x0004
+    TPM_RETURNCMD = 0x0100
+    TPM_RIGHTBUTTON = 0x0002
+    MF_STRING = 0x0000
+    ID_OPEN = 1001
+    ID_EXIT = 1002
+
+    def __init__(
+        self,
+        root: tk.Tk,
+        icon_path: Path,
+        action_callback,
+    ) -> None:
+        self.root = root
+        self.icon_path = icon_path
+        self.action_callback = action_callback
+        self.active = False
+        self.user32 = ctypes.windll.user32
+        self.shell32 = ctypes.windll.shell32
+        self.kernel32 = ctypes.windll.kernel32
+        self._configure_api()
+        self._wndproc = WNDPROCTYPE(self._handle_message)
+        self.hinstance = self.kernel32.GetModuleHandleW(None)
+        self.class_name = f"PeriodicFileBackupTray{id(self)}"
+        self.hwnd = self._create_message_window()
+        self.hicon = self._load_icon()
+
+    def _configure_api(self) -> None:
+        self.kernel32.GetModuleHandleW.restype = HANDLE
+        self.kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+
+        self.user32.CreateWindowExW.restype = wintypes.HWND
+        self.user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD,
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.HWND,
+            HANDLE,
+            HANDLE,
+            ctypes.c_void_p,
+        ]
+        self.user32.DefWindowProcW.restype = LRESULT
+        self.user32.DefWindowProcW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        self.user32.LoadImageW.restype = HANDLE
+        self.user32.LoadImageW.argtypes = [
+            HANDLE,
+            wintypes.LPCWSTR,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        self.user32.LoadIconW.restype = HANDLE
+        self.user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+        self.user32.CreatePopupMenu.restype = HANDLE
+        self.user32.AppendMenuW.argtypes = [
+            HANDLE,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPCWSTR,
+        ]
+        self.user32.TrackPopupMenu.restype = wintypes.UINT
+        self.user32.TrackPopupMenu.argtypes = [
+            HANDLE,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.HWND,
+            ctypes.c_void_p,
+        ]
+        self.user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        self.user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        self.user32.PostMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        self.user32.DestroyMenu.argtypes = [HANDLE]
+        self.user32.DestroyIcon.argtypes = [HANDLE]
+        self.user32.DestroyWindow.argtypes = [wintypes.HWND]
+        self.shell32.Shell_NotifyIconW.argtypes = [
+            wintypes.DWORD,
+            ctypes.POINTER(NOTIFYICONDATAW),
+        ]
+
+    def queue_action(self, action: str) -> None:
+        try:
+            self.action_callback(action)
+        except Exception:
+            pass
+
+    def _create_message_window(self) -> wintypes.HWND:
+        window_class = WNDCLASSW()
+        window_class.lpfnWndProc = self._wndproc
+        window_class.hInstance = self.hinstance
+        window_class.lpszClassName = self.class_name
+        self.user32.RegisterClassW(ctypes.byref(window_class))
+        return self.user32.CreateWindowExW(
+            0,
+            self.class_name,
+            self.class_name,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            self.hinstance,
+            None,
+        )
+
+    def _load_icon(self) -> wintypes.HICON:
+        if self.icon_path.exists():
+            icon = self.user32.LoadImageW(
+                None,
+                str(self.icon_path),
+                self.IMAGE_ICON,
+                0,
+                0,
+                self.LR_LOADFROMFILE | self.LR_DEFAULTSIZE,
+            )
+            if icon:
+                return icon
+        return self.user32.LoadIconW(None, 32512)
+
+    def show(self) -> None:
+        if self.active:
+            return
+        data = NOTIFYICONDATAW()
+        data.cbSize = ctypes.sizeof(data)
+        data.hWnd = self.hwnd
+        data.uID = 1
+        data.uFlags = self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP
+        data.uCallbackMessage = self.WM_TRAYICON
+        data.hIcon = self.hicon
+        data.szTip = "Periodic File Backup"
+        self.shell32.Shell_NotifyIconW(self.NIM_ADD, ctypes.byref(data))
+        self.active = True
+
+    def hide(self) -> None:
+        if not self.active:
+            return
+        data = NOTIFYICONDATAW()
+        data.cbSize = ctypes.sizeof(data)
+        data.hWnd = self.hwnd
+        data.uID = 1
+        self.shell32.Shell_NotifyIconW(self.NIM_DELETE, ctypes.byref(data))
+        self.active = False
+
+    def destroy(self) -> None:
+        self.hide()
+        if self.hicon:
+            self.user32.DestroyIcon(self.hicon)
+            self.hicon = None
+        if self.hwnd:
+            self.user32.DestroyWindow(self.hwnd)
+            self.hwnd = None
+
+    def _show_menu(self) -> None:
+        menu = self.user32.CreatePopupMenu()
+        self.user32.AppendMenuW(menu, self.MF_STRING, self.ID_OPEN, "Open")
+        self.user32.AppendMenuW(menu, self.MF_STRING, self.ID_EXIT, "Exit")
+
+        point = wintypes.POINT()
+        self.user32.GetCursorPos(ctypes.byref(point))
+        self.user32.SetForegroundWindow(self.hwnd)
+        command = self.user32.TrackPopupMenu(
+            menu,
+            self.TPM_RETURNCMD | self.TPM_RIGHTBUTTON,
+            point.x,
+            point.y,
+            0,
+            self.hwnd,
+            None,
+        )
+        self.user32.PostMessageW(self.hwnd, self.WM_NULL, 0, 0)
+        self.user32.DestroyMenu(menu)
+
+        if command == self.ID_OPEN:
+            self.queue_action("open")
+        elif command == self.ID_EXIT:
+            self.queue_action("exit")
+
+    def _handle_message(self, hwnd, message, wparam, lparam):
+        if message == self.WM_TRAYICON:
+            if lparam == self.WM_LBUTTONDBLCLK:
+                self.queue_action("open")
+            elif lparam == self.WM_RBUTTONUP:
+                self._show_menu()
+            return 0
+        if message == self.WM_DESTROY:
+            return 0
+        return self.user32.DefWindowProcW(hwnd, message, wparam, lparam)
+
+
 class PeriodicFileBackupApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -113,6 +374,10 @@ class PeriodicFileBackupApp:
         self.sync_running = False
         self.sync_after_id: str | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
+        self.tray_action_queue: queue.Queue[str] = queue.Queue()
+        self.is_exiting = False
+        self.is_restoring_from_tray = False
+        self.tray_icon: WindowsTrayIcon | None = None
 
         self.tracked_var = tk.StringVar()
         self.destination_var = tk.StringVar()
@@ -125,8 +390,17 @@ class PeriodicFileBackupApp:
         self.destination_label: ttk.Label | None = None
 
         self.build_main_window()
+        if sys.platform == "win32":
+            self.tray_icon = WindowsTrayIcon(
+                self.root,
+                resource_path(ICON_NAME),
+                self.queue_tray_action,
+            )
+        self.root.bind("<Unmap>", self.handle_unmap)
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.refresh_info()
         self.root.after(100, self.drain_log_queue)
+        self.root.after(100, self.drain_tray_action_queue)
 
         if is_settings_ready(self.settings):
             remove_missing_backup_hash_entries(self.settings.destination)
@@ -142,6 +416,60 @@ class PeriodicFileBackupApp:
             window.iconbitmap(str(icon_path))
         except tk.TclError:
             pass
+
+    def handle_unmap(self, _event: tk.Event) -> None:
+        if (
+            self.is_exiting
+            or self.is_restoring_from_tray
+            or self.root.state() != "iconic"
+        ):
+            return
+        self.root.after(0, self.minimize_to_tray)
+
+    def minimize_to_tray(self) -> None:
+        if self.is_exiting:
+            return
+        if self.tray_icon:
+            self.tray_icon.show()
+        self.root.withdraw()
+
+    def queue_tray_action(self, action: str) -> None:
+        self.tray_action_queue.put(action)
+
+    def drain_tray_action_queue(self) -> None:
+        while True:
+            try:
+                action = self.tray_action_queue.get_nowait()
+            except queue.Empty:
+                break
+            if action == "open":
+                self.restore_from_tray()
+            elif action == "exit":
+                self.exit_app()
+                return
+        self.root.after(100, self.drain_tray_action_queue)
+
+    def restore_from_tray(self) -> None:
+        self.is_restoring_from_tray = True
+        try:
+            self.root.deiconify()
+            self.root.state("normal")
+            self.root.lift()
+            self.root.focus_force()
+            if self.tray_icon:
+                self.tray_icon.hide()
+        finally:
+            self.root.after(250, self.finish_restore_from_tray)
+
+    def finish_restore_from_tray(self) -> None:
+        self.is_restoring_from_tray = False
+
+    def exit_app(self) -> None:
+        self.is_exiting = True
+        if self.tray_icon:
+            self.tray_icon.destroy()
+            self.tray_icon = None
+        self.root.destroy()
 
     def build_main_window(self) -> None:
         container = ttk.Frame(self.root, padding=12)
