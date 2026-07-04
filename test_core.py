@@ -46,7 +46,7 @@ class BackupCoreTests(unittest.TestCase):
             self.assertEqual(result.synced_count, 1)
             self.assertEqual(result.errors, [])
             backups = [path.name for path in destination.iterdir() if path.name != HASHES_NAME]
-            self.assertEqual(backups, ["2026-07-01-08-09-10-Name1.sav"])
+            self.assertEqual(backups, ["2026-07-01--08-09-10--Name1.sav"])
 
             entries, known_hashes = load_hash_entries(destination)
             self.assertEqual(len(entries), 1)
@@ -87,7 +87,7 @@ class BackupCoreTests(unittest.TestCase):
 
             self.assertEqual(result.synced_count, 1)
             backups = [path.name for path in destination.iterdir() if path.name != HASHES_NAME]
-            self.assertEqual(backups, ["2026-07-03-12-30-02-Name_new.sav"])
+            self.assertEqual(backups, ["2026-07-03--12-30-02--Name_new.sav"])
 
     def test_file_at_size_limit_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -93,7 +93,7 @@ For each sync:
 Backup filenames use this format:
 
 ```text
-YYYY-MM-DD-HH-MM-SS-originalname
+YYYY-MM-DD--HH-MM-SS--originalname
 ```
 
 The timestamp comes from the original file's modified time, not the time the backup was copied.

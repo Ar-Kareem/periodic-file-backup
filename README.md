@@ -25,7 +25,7 @@ The app syncs immediately after setup, then repeats on the configured period. Us
 
 - `periodic-file-backup.settings` is stored beside the exe.
 - `periodic-file-backup.hashes` is stored in the destination folder.
-- Backups are named `YYYY-MM-DD-HH-MM-SS-originalname`, using the original file's modified time.
+- Backups are named `YYYY-MM-DD--HH-MM-SS--originalname`, using the original file's modified time.
 
 ## Build
 

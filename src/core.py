@@ -138,7 +138,7 @@ def sha256_file(path: Path) -> str:
 
 
 def timestamp_for_filename(file_mtime: datetime) -> str:
-    return file_mtime.strftime("%Y-%m-%d-%H-%M-%S")
+    return file_mtime.strftime("%Y-%m-%d--%H-%M-%S")
 
 
 def unique_destination_path(
@@ -146,7 +146,7 @@ def unique_destination_path(
     source_name: str,
     file_mtime: datetime,
 ) -> Path:
-    candidate = destination / f"{timestamp_for_filename(file_mtime)}-{source_name}"
+    candidate = destination / f"{timestamp_for_filename(file_mtime)}--{source_name}"
     if not candidate.exists():
         return candidate
 
