@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from core import (
+from src.core import (
     APP_NAME,
     Settings,
     default_settings,

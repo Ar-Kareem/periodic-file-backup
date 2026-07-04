@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from core import (
+from src.core import (
     HASHES_NAME,
     Settings,
     load_hash_entries,

@@ -12,7 +12,7 @@ icon_file = Path.cwd() / 'periodic-file-backup.ico'
 
 
 a = Analysis(
-    ['gui.py'],
+    ['src/gui.py'],
     pathex=[],
     binaries=[
         (str(tcl_dll), '.'),
@@ -25,7 +25,7 @@ a = Analysis(
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['pyi_rth_tcl_tk.py'],
+    runtime_hooks=['src/pyi_rth_tcl_tk.py'],
     excludes=[],
     noarchive=False,
     optimize=0,

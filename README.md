@@ -29,9 +29,10 @@ The app syncs immediately after setup, then repeats on the configured period. Us
 
 ## Build
 
-Use the bundled environment:
+Make an environment `./env/` with Python 3.11 and pyinstaller:
 
 ```powershell
+conda activate ./env/
 .\env\python.exe -m unittest -v
 .\env\Scripts\pyinstaller.exe periodic-file-backup.spec
 ```
