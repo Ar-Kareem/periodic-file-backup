@@ -70,8 +70,9 @@ On startup:
 
 1. Load settings from `periodic-file-backup.settings`.
 2. If settings are invalid or missing, open setup.
-3. If settings are valid, sync immediately.
-4. Schedule the next sync using `period_minutes`.
+3. If settings are valid, remove any hash entries whose `backup` file no longer exists.
+4. Sync immediately.
+5. Schedule the next sync using `period_minutes`.
 
 For each sync:
 

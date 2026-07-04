@@ -13,6 +13,7 @@ from src.core import (
     default_settings,
     is_settings_ready,
     load_settings,
+    remove_missing_backup_hash_entries,
     save_settings,
     selected_folder_pattern,
     sync_files,
@@ -111,6 +112,7 @@ class PeriodicFileBackupApp:
         self.root.after(100, self.drain_log_queue)
 
         if is_settings_ready(self.settings):
+            remove_missing_backup_hash_entries(self.settings.destination)
             self.schedule_sync(0)
         else:
             self.root.after(100, self.open_setup)

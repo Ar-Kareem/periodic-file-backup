@@ -11,6 +11,7 @@ from src.core import (
     HASHES_NAME,
     Settings,
     load_hash_entries,
+    remove_missing_backup_hash_entries,
     selected_folder_pattern,
     sync_files,
 )
@@ -103,6 +104,38 @@ class BackupCoreTests(unittest.TestCase):
             self.assertEqual(result.synced_count, 0)
             self.assertEqual(len(result.errors), 1)
             self.assertIn("hit the 0.000976562 MB limit; skipped", result.errors[0])
+
+    def test_removes_hash_entries_for_missing_backup_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp)
+            existing_backup = destination / "existing.sav"
+            missing_backup = destination / "missing.sav"
+            existing_backup.write_bytes(b"existing")
+            hash_entries = [
+                {
+                    "hash": "existing_hash",
+                    "original": "C:/source/existing.sav",
+                    "backup": str(existing_backup),
+                    "copied_at": "2026-07-03T12:30:01",
+                },
+                {
+                    "hash": "missing_hash",
+                    "original": "C:/source/missing.sav",
+                    "backup": str(missing_backup),
+                    "copied_at": "2026-07-03T12:30:02",
+                },
+            ]
+            (destination / HASHES_NAME).write_text(
+                json.dumps(hash_entries, indent=2),
+                encoding="utf-8",
+            )
+
+            removed_count = remove_missing_backup_hash_entries(destination)
+
+            self.assertEqual(removed_count, 1)
+            entries = json.loads((destination / HASHES_NAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["hash"], "existing_hash")
 
     def test_selected_folder_pattern_uses_folder_contents_only(self) -> None:
         self.assertEqual(selected_folder_pattern("C:/Saves"), str(Path("C:/Saves") / "*"))

@@ -109,6 +109,21 @@ def write_hash_entries(destination: str | Path, entries: list[dict[str, str]]) -
     path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 
+def remove_missing_backup_hash_entries(destination: str | Path) -> int:
+    entries, _known_hashes = load_hash_entries(destination)
+    kept_entries = []
+
+    for entry in entries:
+        backup_path = entry.get("backup")
+        if backup_path and Path(backup_path).exists():
+            kept_entries.append(entry)
+
+    removed_count = len(entries) - len(kept_entries)
+    if removed_count:
+        write_hash_entries(destination, kept_entries)
+    return removed_count
+
+
 def resolve_tracked_files(pattern: str) -> list[Path]:
     paths = [Path(item) for item in glob.glob(pattern)]
     return sorted(path for path in paths if path.is_file())
