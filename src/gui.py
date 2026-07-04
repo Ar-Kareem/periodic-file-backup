@@ -4,6 +4,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -24,7 +25,6 @@ ICON_NAME = "periodic-file-backup.ico"
 DEFAULT_WINDOW_SIZE = "430x390"
 MIN_WINDOW_WIDTH = 380
 MIN_WINDOW_HEIGHT = 340
-MAX_INFO_VALUE_CHARS = 34
 
 
 def resource_path(name: str) -> Path:
@@ -33,11 +33,25 @@ def resource_path(name: str) -> Path:
     return Path(__file__).resolve().parents[1] / name
 
 
-def truncate_value(value: str, max_chars: int = MAX_INFO_VALUE_CHARS) -> str:
+def truncate_to_width(value: str, max_width: int, font: tkfont.Font) -> str:
     value = value.strip()
-    if len(value) <= max_chars:
+    if max_width <= 0 or font.measure(value) <= max_width:
         return value
-    return value[: max_chars - 3] + "..."
+
+    ellipsis = "..."
+    if font.measure(ellipsis) >= max_width:
+        return ellipsis
+
+    low = 0
+    high = len(value)
+    while low < high:
+        mid = (low + high + 1) // 2
+        candidate = value[:mid] + ellipsis
+        if font.measure(candidate) <= max_width:
+            low = mid
+        else:
+            high = mid - 1
+    return value[:low] + ellipsis
 
 
 class Tooltip:
@@ -106,6 +120,9 @@ class PeriodicFileBackupApp:
         self.period_var = tk.StringVar()
         self.full_tracked_value = ""
         self.full_destination_value = ""
+        self.info_container: ttk.Frame | None = None
+        self.tracked_label: ttk.Label | None = None
+        self.destination_label: ttk.Label | None = None
 
         self.build_main_window()
         self.refresh_info()
@@ -128,23 +145,27 @@ class PeriodicFileBackupApp:
 
     def build_main_window(self) -> None:
         container = ttk.Frame(self.root, padding=12)
+        self.info_container = container
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(1, weight=1)
         container.rowconfigure(5, weight=1)
+        container.bind("<Configure>", self.update_display_values)
 
         ttk.Label(container, text="Tracked").grid(row=0, column=0, sticky=tk.W, pady=2)
-        tracked_label = ttk.Label(container, textvariable=self.tracked_var)
-        tracked_label.grid(
+        self.tracked_label = ttk.Label(container, textvariable=self.tracked_var)
+        self.tracked_label.grid(
             row=0, column=1, sticky=tk.EW, pady=2
         )
-        Tooltip(tracked_label, lambda: self.full_tracked_value)
+        self.tracked_label.bind("<Configure>", self.update_display_values)
+        Tooltip(self.tracked_label, lambda: self.full_tracked_value)
 
         ttk.Label(container, text="Destination").grid(row=1, column=0, sticky=tk.W, pady=2)
-        destination_label = ttk.Label(container, textvariable=self.destination_var)
-        destination_label.grid(
+        self.destination_label = ttk.Label(container, textvariable=self.destination_var)
+        self.destination_label.grid(
             row=1, column=1, sticky=tk.EW, pady=2
         )
-        Tooltip(destination_label, lambda: self.full_destination_value)
+        self.destination_label.bind("<Configure>", self.update_display_values)
+        Tooltip(self.destination_label, lambda: self.full_destination_value)
 
         ttk.Label(container, text="Size Limit").grid(row=2, column=0, sticky=tk.W, pady=2)
         ttk.Label(container, textvariable=self.size_limit_var).grid(
@@ -176,10 +197,9 @@ class PeriodicFileBackupApp:
         if not is_settings_ready(self.settings):
             self.full_tracked_value = "Not initialized"
             self.full_destination_value = "Not initialized"
-            self.tracked_var.set("Not initialized")
-            self.destination_var.set("Not initialized")
             self.size_limit_var.set("Not initialized")
             self.period_var.set("Not initialized")
+            self.update_display_values()
             return
 
         size_limit = (
@@ -189,10 +209,34 @@ class PeriodicFileBackupApp:
         )
         self.full_tracked_value = self.settings.tracked
         self.full_destination_value = self.settings.destination
-        self.tracked_var.set(truncate_value(self.settings.tracked))
-        self.destination_var.set(truncate_value(self.settings.destination))
         self.size_limit_var.set(size_limit)
         self.period_var.set(f"{self.settings.period_minutes:g} minutes")
+        self.update_display_values()
+
+    def update_display_values(self, _event: tk.Event | None = None) -> None:
+        for label, variable, full_value in (
+            (self.tracked_label, self.tracked_var, self.full_tracked_value),
+            (self.destination_label, self.destination_var, self.full_destination_value),
+        ):
+            if label is None:
+                variable.set(full_value)
+                continue
+
+            font = tkfont.Font(font=label.cget("font"))
+            available_width = self.available_value_width(label)
+            variable.set(truncate_to_width(full_value, available_width, font))
+
+    def available_value_width(self, label: ttk.Label) -> int:
+        if self.info_container is None:
+            return label.winfo_width()
+
+        self.info_container.update_idletasks()
+        container_width = self.info_container.winfo_width()
+        label_x = label.winfo_x()
+        padding = 12
+        scaling = float(self.root.tk.call("tk", "scaling"))
+        available_width = max(label.winfo_width(), container_width - label_x - padding)
+        return int((available_width * scaling) - tkfont.Font(font=label.cget("font")).measure("..."))
 
     def timestamp(self) -> str:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
