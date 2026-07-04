@@ -122,12 +122,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def timestamp_for_filename(now: datetime) -> str:
-    return now.strftime("%Y-%m-%d-%H-%M-%S")
+def timestamp_for_filename(file_mtime: datetime) -> str:
+    return file_mtime.strftime("%Y-%m-%d-%H-%M-%S")
 
 
-def unique_destination_path(destination: Path, source_name: str, now: datetime) -> Path:
-    candidate = destination / f"{timestamp_for_filename(now)}-{source_name}"
+def unique_destination_path(
+    destination: Path,
+    source_name: str,
+    file_mtime: datetime,
+) -> Path:
+    candidate = destination / f"{timestamp_for_filename(file_mtime)}-{source_name}"
     if not candidate.exists():
         return candidate
 
@@ -162,12 +166,13 @@ def sync_files(
     candidates = resolve_tracked_files(settings.tracked)
     for source in candidates:
         try:
+            source_stat = source.stat()
+            modified_at = datetime.fromtimestamp(source_stat.st_mtime)
             if last_period_started_at is not None:
-                modified_at = datetime.fromtimestamp(source.stat().st_mtime)
                 if modified_at <= last_period_started_at:
                     continue
 
-            size_bytes = source.stat().st_size
+            size_bytes = source_stat.st_size
             if size_limit_bytes and size_bytes >= size_limit_bytes:
                 result.errors.append(
                     f"{source}: file size {format_file_size(size_bytes)} hit the "
@@ -179,7 +184,7 @@ def sync_files(
             if file_hash in known_hashes:
                 continue
 
-            backup_path = unique_destination_path(destination, source.name, now)
+            backup_path = unique_destination_path(destination, source.name, modified_at)
             shutil.copy2(source, backup_path)
             entry = {
                 "hash": file_hash,

@@ -95,6 +95,8 @@ Backup filenames use this format:
 YYYY-MM-DD-HH-MM-SS-originalname
 ```
 
+The timestamp comes from the original file's modified time, not the time the backup was copied.
+
 If that filename already exists, append a numeric suffix before the extension.
 
 ## Hash File Format

@@ -30,7 +30,7 @@ class BackupCoreTests(unittest.TestCase):
             source = tmp_path / "source"
             destination = tmp_path / "destination"
             source.mkdir()
-            write_file(source / "Name1.sav", b"one")
+            write_file(source / "Name1.sav", b"one", datetime(2026, 7, 1, 8, 9, 10))
             write_file(source / "Other.sav", b"two")
 
             settings = Settings(
@@ -45,7 +45,7 @@ class BackupCoreTests(unittest.TestCase):
             self.assertEqual(result.synced_count, 1)
             self.assertEqual(result.errors, [])
             backups = [path.name for path in destination.iterdir() if path.name != HASHES_NAME]
-            self.assertEqual(backups, ["2026-07-03-12-30-01-Name1.sav"])
+            self.assertEqual(backups, ["2026-07-01-08-09-10-Name1.sav"])
 
             entries, known_hashes = load_hash_entries(destination)
             self.assertEqual(len(entries), 1)
@@ -77,7 +77,8 @@ class BackupCoreTests(unittest.TestCase):
             source.mkdir()
             previous_period = datetime(2026, 7, 3, 12, 30, 1)
             write_file(source / "Name_old.sav", b"old", previous_period - timedelta(seconds=1))
-            write_file(source / "Name_new.sav", b"new", previous_period + timedelta(seconds=1))
+            new_mtime = previous_period + timedelta(seconds=1)
+            write_file(source / "Name_new.sav", b"new", new_mtime)
 
             settings = Settings(str(source / "Name*"), str(destination), 10, 5)
 
@@ -85,7 +86,7 @@ class BackupCoreTests(unittest.TestCase):
 
             self.assertEqual(result.synced_count, 1)
             backups = [path.name for path in destination.iterdir() if path.name != HASHES_NAME]
-            self.assertEqual(backups, ["2026-07-03-12-35-01-Name_new.sav"])
+            self.assertEqual(backups, ["2026-07-03-12-30-02-Name_new.sav"])
 
     def test_file_at_size_limit_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
