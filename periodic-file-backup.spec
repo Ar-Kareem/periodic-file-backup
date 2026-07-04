@@ -8,6 +8,7 @@ tcl_dir = env_dir / 'Library' / 'lib' / 'tcl8.6'
 tk_dir = env_dir / 'Library' / 'lib' / 'tk8.6'
 tcl_dll = env_dir / 'Library' / 'bin' / 'tcl86t.dll'
 tk_dll = env_dir / 'Library' / 'bin' / 'tk86t.dll'
+icon_file = Path.cwd() / 'periodic-file-backup.ico'
 
 
 a = Analysis(
@@ -50,4 +51,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(icon_file),
 )
