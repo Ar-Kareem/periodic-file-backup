@@ -127,4 +127,4 @@ Size limit errors include the file path, actual file size, configured MB limit, 
 
 ## Packaging Notes
 
-The app uses `periodic-file-backup.spec` for PyInstaller builds. The spec explicitly bundles the matching Tcl/Tk files from the local Python environment and uses `periodic-file-backup.ico` as the exe icon.
+The app uses `periodic-file-backup.spec` for PyInstaller builds. The spec explicitly bundles the matching Tcl/Tk files from the local Python environment and uses `periodic-file-backup.ico` as both the exe icon and the tkinter window icon.

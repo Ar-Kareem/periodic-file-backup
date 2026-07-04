@@ -21,6 +21,7 @@ a = Analysis(
     datas=[
         (str(tcl_dir), '_tcl_data'),
         (str(tk_dir), '_tk_data'),
+        (str(icon_file), '.'),
     ],
     hiddenimports=[],
     hookspath=[],

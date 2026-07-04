@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -8,7 +9,6 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from src.core import (
-    APP_NAME,
     Settings,
     default_settings,
     is_settings_ready,
@@ -19,10 +19,20 @@ from src.core import (
 )
 
 
+ICON_NAME = "periodic-file-backup.ico"
+
+
+def resource_path(name: str) -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / name
+    return Path(__file__).resolve().parents[1] / name
+
+
 class PeriodicFileBackupApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Periodic File Backup")
+        self.set_window_icon(self.root)
         self.root.minsize(720, 460)
 
         self.settings = load_settings()
@@ -45,6 +55,15 @@ class PeriodicFileBackupApp:
             self.schedule_sync(0)
         else:
             self.root.after(100, self.open_setup)
+
+    def set_window_icon(self, window: tk.Tk | tk.Toplevel) -> None:
+        icon_path = resource_path(ICON_NAME)
+        if not icon_path.exists():
+            return
+        try:
+            window.iconbitmap(str(icon_path))
+        except tk.TclError:
+            pass
 
     def build_main_window(self) -> None:
         container = ttk.Frame(self.root, padding=12)
@@ -193,6 +212,7 @@ class PeriodicFileBackupApp:
     def open_setup(self) -> None:
         setup = tk.Toplevel(self.root)
         setup.title("Setup")
+        self.set_window_icon(setup)
         setup.transient(self.root)
         setup.grab_set()
         setup.minsize(640, 190)

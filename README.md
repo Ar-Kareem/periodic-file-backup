@@ -34,7 +34,7 @@ Make an environment `./env/` with Python 3.11 and pyinstaller:
 ```powershell
 conda activate ./env/
 .\env\python.exe -m unittest -v
-.\env\Scripts\pyinstaller.exe periodic-file-backup.spec
+.\env\Scripts\pyinstaller.exe --clean periodic-file-backup.spec
 ```
 
 The built executable is created at:
