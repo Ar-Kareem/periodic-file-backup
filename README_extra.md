@@ -122,6 +122,7 @@ The app logs only:
 
 - `sync started`
 - `manual sync started`
+- `settings saved`
 - `x new files synced. Next sync in y minutes`
 - errors
 

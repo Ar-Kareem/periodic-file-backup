@@ -385,6 +385,7 @@ class PeriodicFileBackupApp:
         )
         save_settings(self.settings)
         self.refresh_info()
+        self.log("settings saved")
         setup.destroy()
         if not self.sync_running:
             self.schedule_sync(0)
