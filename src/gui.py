@@ -20,6 +20,10 @@ from src.core import (
 
 
 ICON_NAME = "periodic-file-backup.ico"
+DEFAULT_WINDOW_SIZE = "430x390"
+MIN_WINDOW_WIDTH = 380
+MIN_WINDOW_HEIGHT = 340
+MAX_INFO_VALUE_CHARS = 34
 
 
 def resource_path(name: str) -> Path:
@@ -28,12 +32,66 @@ def resource_path(name: str) -> Path:
     return Path(__file__).resolve().parents[1] / name
 
 
+def truncate_value(value: str, max_chars: int = MAX_INFO_VALUE_CHARS) -> str:
+    value = value.strip()
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 3] + "..."
+
+
+class Tooltip:
+    def __init__(self, widget: tk.Widget, text_getter) -> None:
+        self.widget = widget
+        self.text_getter = text_getter
+        self.tip: tk.Toplevel | None = None
+        self.after_id: str | None = None
+        widget.bind("<Enter>", self.schedule)
+        widget.bind("<Leave>", self.hide)
+        widget.bind("<ButtonPress>", self.hide)
+
+    def schedule(self, _event: tk.Event) -> None:
+        self.cancel()
+        self.after_id = self.widget.after(400, self.show)
+
+    def cancel(self) -> None:
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+
+    def show(self) -> None:
+        text = str(self.text_getter()).strip()
+        if not text:
+            return
+        self.hide()
+        x = self.widget.winfo_rootx() + 16
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        label = ttk.Label(
+            self.tip,
+            text=text,
+            padding=(8, 4),
+            relief=tk.SOLID,
+            borderwidth=1,
+            wraplength=520,
+        )
+        label.pack()
+
+    def hide(self, _event: tk.Event | None = None) -> None:
+        self.cancel()
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
 class PeriodicFileBackupApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Periodic File Backup")
         self.set_window_icon(self.root)
-        self.root.minsize(720, 460)
+        self.root.geometry(DEFAULT_WINDOW_SIZE)
+        self.root.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self.settings = load_settings()
         self.last_period_started_at: datetime | None = None
@@ -45,7 +103,8 @@ class PeriodicFileBackupApp:
         self.destination_var = tk.StringVar()
         self.size_limit_var = tk.StringVar()
         self.period_var = tk.StringVar()
-        self.next_sync_var = tk.StringVar(value="Not scheduled")
+        self.full_tracked_value = ""
+        self.full_destination_value = ""
 
         self.build_main_window()
         self.refresh_info()
@@ -72,14 +131,18 @@ class PeriodicFileBackupApp:
         container.rowconfigure(5, weight=1)
 
         ttk.Label(container, text="Tracked").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Label(container, textvariable=self.tracked_var).grid(
+        tracked_label = ttk.Label(container, textvariable=self.tracked_var)
+        tracked_label.grid(
             row=0, column=1, sticky=tk.EW, pady=2
         )
+        Tooltip(tracked_label, lambda: self.full_tracked_value)
 
         ttk.Label(container, text="Destination").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Label(container, textvariable=self.destination_var).grid(
+        destination_label = ttk.Label(container, textvariable=self.destination_var)
+        destination_label.grid(
             row=1, column=1, sticky=tk.EW, pady=2
         )
+        Tooltip(destination_label, lambda: self.full_destination_value)
 
         ttk.Label(container, text="Size Limit").grid(row=2, column=0, sticky=tk.W, pady=2)
         ttk.Label(container, textvariable=self.size_limit_var).grid(
@@ -91,15 +154,13 @@ class PeriodicFileBackupApp:
             row=3, column=1, sticky=tk.EW, pady=2
         )
 
-        ttk.Label(container, text="Next Sync").grid(row=4, column=0, sticky=tk.W, pady=2)
-        ttk.Label(container, textvariable=self.next_sync_var).grid(
-            row=4, column=1, sticky=tk.EW, pady=2
-        )
-
         actions = ttk.Frame(container)
-        actions.grid(row=0, column=2, rowspan=5, sticky=tk.NE, padx=(12, 0))
-        ttk.Button(actions, text="Setup", command=self.open_setup).pack(fill=tk.X, pady=(0, 6))
-        ttk.Button(actions, text="Sync Now", command=self.sync_now).pack(fill=tk.X)
+        actions.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
+        ttk.Button(actions, text="Setup", command=self.open_setup).pack(
+            side=tk.LEFT,
+            padx=(0, 8),
+        )
+        ttk.Button(actions, text="Sync Now", command=self.sync_now).pack(side=tk.LEFT)
 
         self.log_box = scrolledtext.ScrolledText(
             container,
@@ -107,10 +168,12 @@ class PeriodicFileBackupApp:
             wrap=tk.WORD,
             state=tk.DISABLED,
         )
-        self.log_box.grid(row=5, column=0, columnspan=3, sticky=tk.NSEW, pady=(12, 0))
+        self.log_box.grid(row=5, column=0, columnspan=2, sticky=tk.NSEW, pady=(12, 0))
 
     def refresh_info(self) -> None:
         if not is_settings_ready(self.settings):
+            self.full_tracked_value = "Not initialized"
+            self.full_destination_value = "Not initialized"
             self.tracked_var.set("Not initialized")
             self.destination_var.set("Not initialized")
             self.size_limit_var.set("Not initialized")
@@ -122,8 +185,10 @@ class PeriodicFileBackupApp:
             if self.settings.size_limit_mb == 0
             else f"{self.settings.size_limit_mb:g} MB"
         )
-        self.tracked_var.set(self.settings.tracked)
-        self.destination_var.set(self.settings.destination)
+        self.full_tracked_value = self.settings.tracked
+        self.full_destination_value = self.settings.destination
+        self.tracked_var.set(truncate_value(self.settings.tracked))
+        self.destination_var.set(truncate_value(self.settings.destination))
         self.size_limit_var.set(size_limit)
         self.period_var.set(f"{self.settings.period_minutes:g} minutes")
 
@@ -148,7 +213,7 @@ class PeriodicFileBackupApp:
             self.log_box.see(tk.END)
         self.root.after(100, self.drain_log_queue)
 
-    def schedule_sync(self, delay_ms: int | None = None) -> None:
+    def schedule_sync(self, delay_ms: int | None = None, manual: bool = False) -> None:
         if self.sync_after_id:
             self.root.after_cancel(self.sync_after_id)
             self.sync_after_id = None
@@ -156,13 +221,10 @@ class PeriodicFileBackupApp:
         if delay_ms is None:
             delay_ms = int(self.settings.period_minutes * 60 * 1000)
 
-        next_sync = datetime.now()
-        if delay_ms:
-            next_sync = datetime.fromtimestamp(
-                datetime.now().timestamp() + delay_ms / 1000
-            )
-        self.next_sync_var.set(next_sync.strftime("%Y-%m-%d %H:%M:%S"))
-        self.sync_after_id = self.root.after(delay_ms, self.start_sync)
+        self.sync_after_id = self.root.after(
+            delay_ms,
+            lambda: self.start_sync(manual=manual),
+        )
 
     def sync_now(self) -> None:
         if self.sync_running:
@@ -170,9 +232,9 @@ class PeriodicFileBackupApp:
         if not is_settings_ready(self.settings):
             self.open_setup()
             return
-        self.schedule_sync(0)
+        self.schedule_sync(0, manual=True)
 
-    def start_sync(self) -> None:
+    def start_sync(self, manual: bool = False) -> None:
         if self.sync_running:
             return
         if not is_settings_ready(self.settings):
@@ -184,7 +246,10 @@ class PeriodicFileBackupApp:
         period_started_at = datetime.now()
         previous_period_started_at = self.last_period_started_at
         self.last_period_started_at = period_started_at
-        self.log("sync started")
+        if manual:
+            self.log("manual sync started")
+        else:
+            self.log("sync started")
 
         thread = threading.Thread(
             target=self.run_sync,

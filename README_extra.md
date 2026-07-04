@@ -40,7 +40,6 @@ The main window shows basic info at the top:
 - Destination
 - Size Limit
 - Period
-- Next Sync
 
 If settings are missing or incomplete, the fields show `Not initialized` and the setup window opens.
 
@@ -57,11 +56,13 @@ The tracked folder selector sets the tracked pattern to:
 selected_folder\*
 ```
 
-The main window also has:
+Below the info rows, the main window also has:
 
 - `Setup` button.
 - `Sync Now` button.
 - scrolling log textbox that always scrolls to the bottom.
+- shortened Tracked and Destination values ending in `...` when needed.
+- hover tooltips on the Tracked and Destination values showing the full path/pattern.
 
 ## Sync Behavior
 
@@ -120,6 +121,7 @@ Every log line is timestamped.
 The app logs only:
 
 - `sync started`
+- `manual sync started`
 - `x new files synced. Next sync in y minutes`
 - errors
 
