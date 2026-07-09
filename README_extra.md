@@ -63,8 +63,10 @@ Below the info rows, the main window also has:
 - scrolling log textbox that always scrolls to the bottom.
 - shortened Tracked and Destination values ending in `...` when needed.
 - hover tooltips on the Tracked and Destination values showing the full path/pattern.
+- `Open` buttons beside Tracked and Destination that open those folders.
+- a Period value that shows a live `(next in mm:ss)` countdown when a sync is scheduled.
 - minimizing the main window hides it in the Windows system tray.
-- double-clicking the tray icon restores the window.
+- clicking the tray icon restores the window.
 - right-clicking the tray icon shows `Open` and `Exit`.
 
 ## Sync Behavior
@@ -91,7 +93,7 @@ For each sync:
 10. Otherwise copy the file to the destination folder.
 11. Append a hash entry to the hash list.
 12. Write the updated hash list back to `periodic-file-backup.hashes`.
-13. Log `x new files synced. Next sync in y minutes`.
+13. If files were copied, log `x new files synced`.
 
 Backup filenames use this format:
 
@@ -129,7 +131,7 @@ The app logs only:
 - `sync started`
 - `manual sync started`
 - `settings saved`
-- `x new files synced. Next sync in y minutes`
+- `x new files synced` when `x` is greater than 0
 - errors
 
 Size limit errors include the file path, actual file size, configured MB limit, and `skipped`.

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import queue
 import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from ctypes import wintypes
@@ -143,6 +144,7 @@ if sys.platform == "win32":
 class WindowsTrayIcon:
     WM_TRAYICON = 0x8000 + 20
     WM_NULL = 0x0000
+    WM_LBUTTONUP = 0x0202
     WM_LBUTTONDBLCLK = 0x0203
     WM_RBUTTONUP = 0x0205
     WM_DESTROY = 0x0002
@@ -350,15 +352,18 @@ class WindowsTrayIcon:
             self.queue_action("exit")
 
     def _handle_message(self, hwnd, message, wparam, lparam):
-        if message == self.WM_TRAYICON:
-            if lparam == self.WM_LBUTTONDBLCLK:
-                self.queue_action("open")
-            elif lparam == self.WM_RBUTTONUP:
-                self._show_menu()
+        try:
+            if message == self.WM_TRAYICON:
+                if lparam in (self.WM_LBUTTONUP, self.WM_LBUTTONDBLCLK):
+                    self.queue_action("open")
+                elif lparam == self.WM_RBUTTONUP:
+                    self._show_menu()
+                return 0
+            if message == self.WM_DESTROY:
+                return 0
+            return self.user32.DefWindowProcW(hwnd, message, wparam, lparam)
+        except Exception:
             return 0
-        if message == self.WM_DESTROY:
-            return 0
-        return self.user32.DefWindowProcW(hwnd, message, wparam, lparam)
 
 
 class PeriodicFileBackupApp:
@@ -371,6 +376,7 @@ class PeriodicFileBackupApp:
 
         self.settings = load_settings()
         self.last_period_started_at: datetime | None = None
+        self.next_sync_due_at: datetime | None = None
         self.sync_running = False
         self.sync_after_id: str | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -388,6 +394,8 @@ class PeriodicFileBackupApp:
         self.info_container: ttk.Frame | None = None
         self.tracked_label: ttk.Label | None = None
         self.destination_label: ttk.Label | None = None
+        self.tracked_open_button: ttk.Button | None = None
+        self.destination_open_button: ttk.Button | None = None
 
         self.build_main_window()
         if sys.platform == "win32":
@@ -401,6 +409,7 @@ class PeriodicFileBackupApp:
         self.refresh_info()
         self.root.after(100, self.drain_log_queue)
         self.root.after(100, self.drain_tray_action_queue)
+        self.root.after(1000, self.update_countdown)
 
         if is_settings_ready(self.settings):
             remove_missing_backup_hash_entries(self.settings.destination)
@@ -451,17 +460,14 @@ class PeriodicFileBackupApp:
 
     def restore_from_tray(self) -> None:
         self.is_restoring_from_tray = True
-        try:
-            self.root.deiconify()
-            self.root.state("normal")
-            self.root.lift()
-            self.root.focus_force()
-            if self.tray_icon:
-                self.tray_icon.hide()
-        finally:
-            self.root.after(250, self.finish_restore_from_tray)
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        self.root.after(250, self.finish_restore_from_tray)
 
     def finish_restore_from_tray(self) -> None:
+        if self.tray_icon:
+            self.tray_icon.hide()
         self.is_restoring_from_tray = False
 
     def exit_app(self) -> None:
@@ -476,6 +482,7 @@ class PeriodicFileBackupApp:
         self.info_container = container
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(1, weight=1)
+        container.columnconfigure(2, weight=0)
         container.rowconfigure(5, weight=1)
         container.bind("<Configure>", self.update_display_values)
 
@@ -486,6 +493,13 @@ class PeriodicFileBackupApp:
         )
         self.tracked_label.bind("<Configure>", self.update_display_values)
         Tooltip(self.tracked_label, lambda: self.full_tracked_value)
+        self.tracked_open_button = ttk.Button(
+            container,
+            text="Open",
+            width=7,
+            command=self.open_tracked_folder,
+        )
+        self.tracked_open_button.grid(row=0, column=2, sticky=tk.E, padx=(10, 0), pady=2)
 
         ttk.Label(container, text="Destination").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.destination_label = ttk.Label(container, textvariable=self.destination_var)
@@ -494,6 +508,15 @@ class PeriodicFileBackupApp:
         )
         self.destination_label.bind("<Configure>", self.update_display_values)
         Tooltip(self.destination_label, lambda: self.full_destination_value)
+        self.destination_open_button = ttk.Button(
+            container,
+            text="Open",
+            width=7,
+            command=self.open_destination_folder,
+        )
+        self.destination_open_button.grid(
+            row=1, column=2, sticky=tk.E, padx=(10, 0), pady=2
+        )
 
         ttk.Label(container, text="Size Limit").grid(row=2, column=0, sticky=tk.W, pady=2)
         ttk.Label(container, textvariable=self.size_limit_var).grid(
@@ -506,7 +529,7 @@ class PeriodicFileBackupApp:
         )
 
         actions = ttk.Frame(container)
-        actions.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
+        actions.grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
         ttk.Button(actions, text="Setup", command=self.open_setup).pack(
             side=tk.LEFT,
             padx=(0, 8),
@@ -519,7 +542,7 @@ class PeriodicFileBackupApp:
             wrap=tk.WORD,
             state=tk.DISABLED,
         )
-        self.log_box.grid(row=5, column=0, columnspan=2, sticky=tk.NSEW, pady=(12, 0))
+        self.log_box.grid(row=5, column=0, columnspan=3, sticky=tk.NSEW, pady=(12, 0))
 
     def refresh_info(self) -> None:
         if not is_settings_ready(self.settings):
@@ -527,6 +550,7 @@ class PeriodicFileBackupApp:
             self.full_destination_value = "Not initialized"
             self.size_limit_var.set("Not initialized")
             self.period_var.set("Not initialized")
+            self.update_open_button_states()
             self.update_display_values()
             return
 
@@ -538,8 +562,36 @@ class PeriodicFileBackupApp:
         self.full_tracked_value = self.settings.tracked
         self.full_destination_value = self.settings.destination
         self.size_limit_var.set(size_limit)
-        self.period_var.set(f"{self.settings.period_minutes:g} minutes")
+        self.update_period_display()
+        self.update_open_button_states()
         self.update_display_values()
+
+    def update_open_button_states(self) -> None:
+        state = tk.NORMAL if is_settings_ready(self.settings) else tk.DISABLED
+        for button in (self.tracked_open_button, self.destination_open_button):
+            if button is not None:
+                button.configure(state=state)
+
+    def update_period_display(self) -> None:
+        if not is_settings_ready(self.settings):
+            self.period_var.set("Not initialized")
+            return
+
+        text = f"{self.settings.period_minutes:g} minutes"
+        if self.sync_running:
+            self.period_var.set(f"{text} (syncing)")
+            return
+        if self.next_sync_due_at is not None:
+            remaining = max(timedelta(), self.next_sync_due_at - datetime.now())
+            total_seconds = int(remaining.total_seconds())
+            minutes, seconds = divmod(total_seconds, 60)
+            self.period_var.set(f"{text} (next in {minutes:02d}:{seconds:02d})")
+            return
+        self.period_var.set(text)
+
+    def update_countdown(self) -> None:
+        self.update_period_display()
+        self.root.after(1000, self.update_countdown)
 
     def update_display_values(self, _event: tk.Event | None = None) -> None:
         for label, variable, full_value in (
@@ -562,6 +614,10 @@ class PeriodicFileBackupApp:
         container_width = self.info_container.winfo_width()
         label_x = label.winfo_x()
         padding = 12
+        if label is self.tracked_label and self.tracked_open_button is not None:
+            padding += self.tracked_open_button.winfo_width() + 10
+        if label is self.destination_label and self.destination_open_button is not None:
+            padding += self.destination_open_button.winfo_width() + 10
         scaling = float(self.root.tk.call("tk", "scaling"))
         available_width = max(label.winfo_width(), container_width - label_x - padding)
         return int((available_width * scaling) - tkfont.Font(font=label.cget("font")).measure("..."))
@@ -595,6 +651,8 @@ class PeriodicFileBackupApp:
         if delay_ms is None:
             delay_ms = int(self.settings.period_minutes * 60 * 1000)
 
+        self.next_sync_due_at = datetime.now() + timedelta(milliseconds=delay_ms)
+        self.update_period_display()
         self.sync_after_id = self.root.after(
             delay_ms,
             lambda: self.start_sync(manual=manual),
@@ -616,7 +674,9 @@ class PeriodicFileBackupApp:
             return
 
         self.sync_after_id = None
+        self.next_sync_due_at = None
         self.sync_running = True
+        self.update_period_display()
         period_started_at = datetime.now()
         previous_period_started_at = self.last_period_started_at
         self.last_period_started_at = period_started_at
@@ -637,16 +697,33 @@ class PeriodicFileBackupApp:
             result = sync_files(self.settings, previous_period_started_at)
             for error in result.errors or []:
                 self.log(error)
-            self.log(
-                f"{result.synced_count} new files synced. "
-                f"Next sync in {self.settings.period_minutes:g} minutes"
-            )
+            if result.synced_count:
+                self.log(f"{result.synced_count} new files synced")
         finally:
             self.log_queue.put("__sync_finished__")
 
     def finish_sync(self) -> None:
         self.sync_running = False
         self.schedule_sync()
+
+    def open_folder(self, folder: Path) -> None:
+        try:
+            if not folder.exists():
+                messagebox.showerror("Open folder", f"Folder does not exist:\n{folder}")
+                return
+            os.startfile(str(folder))
+        except OSError as exc:
+            messagebox.showerror("Open folder", str(exc))
+
+    def open_tracked_folder(self) -> None:
+        if not is_settings_ready(self.settings):
+            return
+        self.open_folder(Path(self.settings.tracked).expanduser().parent)
+
+    def open_destination_folder(self) -> None:
+        if not is_settings_ready(self.settings):
+            return
+        self.open_folder(Path(self.settings.destination).expanduser())
 
     def open_setup(self) -> None:
         setup = tk.Toplevel(self.root)
@@ -701,17 +778,21 @@ class PeriodicFileBackupApp:
         ttk.Button(buttons, text="Cancel", command=setup.destroy).pack(
             side=tk.RIGHT, padx=(8, 0)
         )
-        ttk.Button(
-            buttons,
-            text="Save",
-            command=lambda: self.save_setup(
+        def save() -> None:
+            self.save_setup(
                 setup,
                 tracked.get(),
                 destination.get(),
                 size_limit.get(),
                 period.get(),
-            ),
+            )
+
+        ttk.Button(
+            buttons,
+            text="Save",
+            command=save,
         ).pack(side=tk.RIGHT)
+        setup.bind("<Return>", lambda _event: save())
 
     def choose_tracked_folder(self, tracked: tk.StringVar) -> None:
         folder = filedialog.askdirectory(parent=self.root)
