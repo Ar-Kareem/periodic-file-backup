@@ -13,6 +13,7 @@ liblzma_dll = env_dir / 'Library' / 'bin' / 'liblzma.dll'
 libbz2_dll = env_dir / 'Library' / 'bin' / 'libbz2.dll'
 ffi_dll = env_dir / 'Library' / 'bin' / 'ffi.dll'
 icon_file = Path.cwd() / 'periodic-file-backup.ico'
+paused_icon_file = Path.cwd() / 'periodic-file-backup-paused.ico'
 
 
 a = Analysis(
@@ -30,6 +31,7 @@ a = Analysis(
         (str(tcl_dir), '_tcl_data'),
         (str(tk_dir), '_tk_data'),
         (str(icon_file), '.'),
+        (str(paused_icon_file), '.'),
     ],
     hiddenimports=[],
     hookspath=[],

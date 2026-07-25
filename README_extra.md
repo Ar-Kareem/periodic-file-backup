@@ -67,6 +67,7 @@ Below the info rows, the main window also has:
 - a Period value that shows a live `(next in mm:ss)` countdown when a sync is scheduled.
 - a Period-row `Pause` / `Resume` button.
 - a paused mode that sets Period to `PAUSED`, disables manual sync, cancels scheduled syncs, and shows a clear red `PAUSED - BACKUPS ARE NOT RUNNING` banner.
+- a paused window/tray icon using `periodic-file-backup-paused.ico`.
 - minimizing the main window hides it in the Windows system tray.
 - clicking the tray icon restores the window.
 - right-clicking the tray icon shows `Open` and `Exit`.

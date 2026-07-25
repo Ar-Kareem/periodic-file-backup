@@ -25,6 +25,7 @@ from src.core import (
 
 
 ICON_NAME = "periodic-file-backup.ico"
+PAUSED_ICON_NAME = "periodic-file-backup-paused.ico"
 DEFAULT_WINDOW_SIZE = "430x390"
 MIN_WINDOW_WIDTH = 380
 MIN_WINDOW_HEIGHT = 340
@@ -152,6 +153,7 @@ class WindowsTrayIcon:
     LR_LOADFROMFILE = 0x0010
     LR_DEFAULTSIZE = 0x0040
     NIM_ADD = 0
+    NIM_MODIFY = 1
     NIM_DELETE = 2
     NIF_MESSAGE = 0x0001
     NIF_ICON = 0x0002
@@ -180,7 +182,7 @@ class WindowsTrayIcon:
         self.hinstance = self.kernel32.GetModuleHandleW(None)
         self.class_name = f"PeriodicFileBackupTray{id(self)}"
         self.hwnd = self._create_message_window()
-        self.hicon = self._load_icon()
+        self.hicon = self._load_icon(self.icon_path)
 
     def _configure_api(self) -> None:
         self.kernel32.GetModuleHandleW.restype = HANDLE
@@ -279,11 +281,11 @@ class WindowsTrayIcon:
             None,
         )
 
-    def _load_icon(self) -> wintypes.HICON:
-        if self.icon_path.exists():
+    def _load_icon(self, icon_path: Path) -> wintypes.HICON:
+        if icon_path.exists():
             icon = self.user32.LoadImageW(
                 None,
-                str(self.icon_path),
+                str(icon_path),
                 self.IMAGE_ICON,
                 0,
                 0,
@@ -293,19 +295,38 @@ class WindowsTrayIcon:
                 return icon
         return self.user32.LoadIconW(None, 32512)
 
+    def set_icon(self, icon_path: Path) -> None:
+        new_icon = self._load_icon(icon_path)
+        if not new_icon:
+            return
+
+        old_icon = self.hicon
+        self.icon_path = icon_path
+        self.hicon = new_icon
+        if self.active:
+            self.update_tray_icon()
+        if old_icon:
+            self.user32.DestroyIcon(old_icon)
+
     def show(self) -> None:
         if self.active:
             return
+        self.notify_icon(self.NIM_ADD, self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP)
+        self.active = True
+
+    def update_tray_icon(self) -> None:
+        self.notify_icon(self.NIM_MODIFY, self.NIF_ICON | self.NIF_TIP)
+
+    def notify_icon(self, message: int, flags: int) -> None:
         data = NOTIFYICONDATAW()
         data.cbSize = ctypes.sizeof(data)
         data.hWnd = self.hwnd
         data.uID = 1
-        data.uFlags = self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP
+        data.uFlags = flags
         data.uCallbackMessage = self.WM_TRAYICON
         data.hIcon = self.hicon
         data.szTip = "Periodic File Backup"
-        self.shell32.Shell_NotifyIconW(self.NIM_ADD, ctypes.byref(data))
-        self.active = True
+        self.shell32.Shell_NotifyIconW(message, ctypes.byref(data))
 
     def hide(self) -> None:
         if not self.active:
@@ -421,8 +442,15 @@ class PeriodicFileBackupApp:
         else:
             self.root.after(100, self.open_setup)
 
-    def set_window_icon(self, window: tk.Tk | tk.Toplevel) -> None:
-        icon_path = resource_path(ICON_NAME)
+    def current_icon_name(self) -> str:
+        return PAUSED_ICON_NAME if getattr(self, "is_paused", False) else ICON_NAME
+
+    def set_window_icon(
+        self,
+        window: tk.Tk | tk.Toplevel,
+        icon_name: str | None = None,
+    ) -> None:
+        icon_path = resource_path(icon_name or self.current_icon_name())
         if not icon_path.exists():
             return
         try:
@@ -615,6 +643,9 @@ class PeriodicFileBackupApp:
 
         title = "Periodic File Backup (PAUSED)" if self.is_paused else "Periodic File Backup"
         self.root.title(title)
+        self.set_window_icon(self.root)
+        if self.tray_icon is not None:
+            self.tray_icon.set_icon(resource_path(self.current_icon_name()))
 
     def update_period_display(self) -> None:
         if self.is_paused:
