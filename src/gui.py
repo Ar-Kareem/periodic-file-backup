@@ -434,6 +434,7 @@ class PeriodicFileBackupApp:
         if (
             self.is_exiting
             or self.is_restoring_from_tray
+            or self.is_paused
             or self.root.state() != "iconic"
         ):
             return

@@ -8,6 +8,10 @@ tcl_dir = env_dir / 'Library' / 'lib' / 'tcl8.6'
 tk_dir = env_dir / 'Library' / 'lib' / 'tk8.6'
 tcl_dll = env_dir / 'Library' / 'bin' / 'tcl86t.dll'
 tk_dll = env_dir / 'Library' / 'bin' / 'tk86t.dll'
+libcrypto_dll = env_dir / 'Library' / 'bin' / 'libcrypto-3-x64.dll'
+liblzma_dll = env_dir / 'Library' / 'bin' / 'liblzma.dll'
+libbz2_dll = env_dir / 'Library' / 'bin' / 'libbz2.dll'
+ffi_dll = env_dir / 'Library' / 'bin' / 'ffi.dll'
 icon_file = Path.cwd() / 'periodic-file-backup.ico'
 
 
@@ -17,6 +21,10 @@ a = Analysis(
     binaries=[
         (str(tcl_dll), '.'),
         (str(tk_dll), '.'),
+        (str(libcrypto_dll), '.'),
+        (str(liblzma_dll), '.'),
+        (str(libbz2_dll), '.'),
+        (str(ffi_dll), '.'),
     ],
     datas=[
         (str(tcl_dir), '_tcl_data'),
