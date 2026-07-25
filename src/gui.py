@@ -613,7 +613,7 @@ class PeriodicFileBackupApp:
             elif not self.is_paused and self.pause_banner.winfo_ismapped():
                 self.pause_banner.pack_forget()
 
-        title = "Periodic File Backup - PAUSED" if self.is_paused else "Periodic File Backup"
+        title = "Periodic File Backup (PAUSED)" if self.is_paused else "Periodic File Backup"
         self.root.title(title)
 
     def update_period_display(self) -> None:
