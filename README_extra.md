@@ -65,6 +65,8 @@ Below the info rows, the main window also has:
 - hover tooltips on the Tracked and Destination values showing the full path/pattern.
 - `Open` buttons beside Tracked and Destination that open those folders.
 - a Period value that shows a live `(next in mm:ss)` countdown when a sync is scheduled.
+- a Period-row `Pause` / `Resume` button.
+- a paused mode that sets Period to `PAUSED`, disables manual sync, cancels scheduled syncs, and shows a clear red `PAUSED - BACKUPS ARE NOT RUNNING` banner.
 - minimizing the main window hides it in the Windows system tray.
 - clicking the tray icon restores the window.
 - right-clicking the tray icon shows `Open` and `Exit`.
@@ -78,6 +80,8 @@ On startup:
 3. If settings are valid, remove any hash entries whose `backup` file no longer exists.
 4. Sync immediately.
 5. Schedule the next sync using `period_minutes`.
+
+Pause mode is runtime-only and defaults to resumed on app start. While paused, scheduled syncs are canceled and no new manual or automatic syncs start. Resuming schedules the next sync using the configured period.
 
 For each sync:
 

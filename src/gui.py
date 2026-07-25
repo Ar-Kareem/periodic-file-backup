@@ -379,6 +379,7 @@ class PeriodicFileBackupApp:
         self.next_sync_due_at: datetime | None = None
         self.sync_running = False
         self.sync_after_id: str | None = None
+        self.is_paused = False
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.tray_action_queue: queue.Queue[str] = queue.Queue()
         self.is_exiting = False
@@ -392,10 +393,13 @@ class PeriodicFileBackupApp:
         self.full_tracked_value = ""
         self.full_destination_value = ""
         self.info_container: ttk.Frame | None = None
+        self.pause_banner: tk.Label | None = None
         self.tracked_label: ttk.Label | None = None
         self.destination_label: ttk.Label | None = None
         self.tracked_open_button: ttk.Button | None = None
         self.destination_open_button: ttk.Button | None = None
+        self.pause_button: ttk.Button | None = None
+        self.sync_now_button: ttk.Button | None = None
 
         self.build_main_window()
         if sys.platform == "win32":
@@ -478,6 +482,15 @@ class PeriodicFileBackupApp:
         self.root.destroy()
 
     def build_main_window(self) -> None:
+        self.pause_banner = tk.Label(
+            self.root,
+            text="PAUSED - BACKUPS ARE NOT RUNNING",
+            bg="#b00020",
+            fg="white",
+            font=("TkDefaultFont", 10, "bold"),
+            pady=6,
+        )
+
         container = ttk.Frame(self.root, padding=12)
         self.info_container = container
         container.pack(fill=tk.BOTH, expand=True)
@@ -527,6 +540,13 @@ class PeriodicFileBackupApp:
         ttk.Label(container, textvariable=self.period_var).grid(
             row=3, column=1, sticky=tk.EW, pady=2
         )
+        self.pause_button = ttk.Button(
+            container,
+            text="Pause",
+            width=7,
+            command=self.toggle_pause,
+        )
+        self.pause_button.grid(row=3, column=2, sticky=tk.E, padx=(10, 0), pady=2)
 
         actions = ttk.Frame(container)
         actions.grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
@@ -534,7 +554,8 @@ class PeriodicFileBackupApp:
             side=tk.LEFT,
             padx=(0, 8),
         )
-        ttk.Button(actions, text="Sync Now", command=self.sync_now).pack(side=tk.LEFT)
+        self.sync_now_button = ttk.Button(actions, text="Sync Now", command=self.sync_now)
+        self.sync_now_button.pack(side=tk.LEFT)
 
         self.log_box = scrolledtext.ScrolledText(
             container,
@@ -551,6 +572,7 @@ class PeriodicFileBackupApp:
             self.size_limit_var.set("Not initialized")
             self.period_var.set("Not initialized")
             self.update_open_button_states()
+            self.update_pause_display()
             self.update_display_values()
             return
 
@@ -564,6 +586,7 @@ class PeriodicFileBackupApp:
         self.size_limit_var.set(size_limit)
         self.update_period_display()
         self.update_open_button_states()
+        self.update_pause_display()
         self.update_display_values()
 
     def update_open_button_states(self) -> None:
@@ -571,8 +594,31 @@ class PeriodicFileBackupApp:
         for button in (self.tracked_open_button, self.destination_open_button):
             if button is not None:
                 button.configure(state=state)
+        if self.sync_now_button is not None:
+            sync_state = (
+                tk.NORMAL
+                if is_settings_ready(self.settings) and not self.is_paused
+                else tk.DISABLED
+            )
+            self.sync_now_button.configure(state=sync_state)
+
+    def update_pause_display(self) -> None:
+        if self.pause_button is not None:
+            self.pause_button.configure(text="Resume" if self.is_paused else "Pause")
+
+        if self.pause_banner is not None:
+            if self.is_paused and not self.pause_banner.winfo_ismapped():
+                self.pause_banner.pack(fill=tk.X, before=self.info_container)
+            elif not self.is_paused and self.pause_banner.winfo_ismapped():
+                self.pause_banner.pack_forget()
+
+        title = "Periodic File Backup - PAUSED" if self.is_paused else "Periodic File Backup"
+        self.root.title(title)
 
     def update_period_display(self) -> None:
+        if self.is_paused:
+            self.period_var.set("PAUSED")
+            return
         if not is_settings_ready(self.settings):
             self.period_var.set("Not initialized")
             return
@@ -647,6 +693,10 @@ class PeriodicFileBackupApp:
         if self.sync_after_id:
             self.root.after_cancel(self.sync_after_id)
             self.sync_after_id = None
+        if self.is_paused:
+            self.next_sync_due_at = None
+            self.update_period_display()
+            return
 
         if delay_ms is None:
             delay_ms = int(self.settings.period_minutes * 60 * 1000)
@@ -659,7 +709,7 @@ class PeriodicFileBackupApp:
         )
 
     def sync_now(self) -> None:
-        if self.sync_running:
+        if self.sync_running or self.is_paused:
             return
         if not is_settings_ready(self.settings):
             self.open_setup()
@@ -667,7 +717,7 @@ class PeriodicFileBackupApp:
         self.schedule_sync(0, manual=True)
 
     def start_sync(self, manual: bool = False) -> None:
-        if self.sync_running:
+        if self.sync_running or self.is_paused:
             return
         if not is_settings_ready(self.settings):
             self.open_setup()
@@ -704,7 +754,25 @@ class PeriodicFileBackupApp:
 
     def finish_sync(self) -> None:
         self.sync_running = False
+        if self.is_paused:
+            self.next_sync_due_at = None
+            self.update_period_display()
+            return
         self.schedule_sync()
+
+    def toggle_pause(self) -> None:
+        self.is_paused = not self.is_paused
+        if self.is_paused:
+            if self.sync_after_id:
+                self.root.after_cancel(self.sync_after_id)
+                self.sync_after_id = None
+            self.next_sync_due_at = None
+        elif is_settings_ready(self.settings) and not self.sync_running:
+            self.schedule_sync()
+
+        self.update_open_button_states()
+        self.update_pause_display()
+        self.update_period_display()
 
     def open_folder(self, folder: Path) -> None:
         try:
@@ -842,7 +910,7 @@ class PeriodicFileBackupApp:
         self.refresh_info()
         self.log("settings saved")
         setup.destroy()
-        if not self.sync_running:
+        if not self.sync_running and not self.is_paused:
             self.schedule_sync(0)
 
 
