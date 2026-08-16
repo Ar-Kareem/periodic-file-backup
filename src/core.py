@@ -5,10 +5,10 @@ import hashlib
 import json
 import shutil
 import sys
-from dataclasses import dataclass
+import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 
 APP_NAME = "periodic-file-backup"
@@ -19,9 +19,14 @@ DEFAULT_PERIOD_MINUTES = 5
 
 
 @dataclass
-class Settings:
+class BackupTarget:
     tracked: str = ""
     destination: str = ""
+
+
+@dataclass
+class Settings:
+    targets: list[BackupTarget] = field(default_factory=list)
     size_limit_mb: float = DEFAULT_SIZE_LIMIT_MB
     period_minutes: float = DEFAULT_PERIOD_MINUTES
 
@@ -52,7 +57,14 @@ def hashes_path(destination: str | Path) -> Path:
 
 def default_settings(base_dir: Path | None = None) -> Settings:
     directory = base_dir or app_dir()
-    return Settings(destination=str(directory))
+    return Settings(targets=[BackupTarget(destination=str(directory))])
+
+
+def backup_targets(settings: Settings) -> list[BackupTarget]:
+    return [
+        BackupTarget(str(target.tracked), str(target.destination))
+        for target in settings.targets
+    ]
 
 
 def load_settings(base_dir: Path | None = None) -> Settings:
@@ -61,10 +73,21 @@ def load_settings(base_dir: Path | None = None) -> Settings:
         return default_settings(base_dir)
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    fallback = default_settings(base_dir)
+    target_data = data.get("targets", [])
+    targets = []
+    if isinstance(target_data, list):
+        for item in target_data:
+            if not isinstance(item, dict):
+                continue
+            targets.append(
+                BackupTarget(
+                    tracked=str(item.get("tracked", "")),
+                    destination=str(item.get("destination", "")),
+                )
+            )
+
     return Settings(
-        tracked=str(data.get("tracked", "")),
-        destination=str(data.get("destination") or fallback.destination),
+        targets=targets,
         size_limit_mb=float(data.get("size_limit_mb", DEFAULT_SIZE_LIMIT_MB)),
         period_minutes=float(data.get("period_minutes", DEFAULT_PERIOD_MINUTES)),
     )
@@ -72,9 +95,15 @@ def load_settings(base_dir: Path | None = None) -> Settings:
 
 def save_settings(settings: Settings, base_dir: Path | None = None) -> None:
     path = settings_path(base_dir)
+    targets = backup_targets(settings)
     data = {
-        "tracked": settings.tracked,
-        "destination": settings.destination,
+        "targets": [
+            {
+                "tracked": target.tracked,
+                "destination": target.destination,
+            }
+            for target in targets
+        ],
         "size_limit_mb": settings.size_limit_mb,
         "period_minutes": settings.period_minutes,
     }
@@ -82,7 +111,10 @@ def save_settings(settings: Settings, base_dir: Path | None = None) -> None:
 
 
 def is_settings_ready(settings: Settings) -> bool:
-    return bool(settings.tracked.strip()) and bool(settings.destination.strip())
+    targets = backup_targets(settings)
+    return bool(targets) and all(
+        target.tracked.strip() and target.destination.strip() for target in targets
+    )
 
 
 def load_hash_entries(destination: str | Path) -> tuple[list[dict[str, str]], set[str]]:
@@ -124,9 +156,21 @@ def remove_missing_backup_hash_entries(destination: str | Path) -> int:
     return removed_count
 
 
-def resolve_tracked_files(pattern: str) -> list[Path]:
+def remove_missing_backup_hash_entries_for_settings(settings: Settings) -> int:
+    removed_count = 0
+    seen_destinations = set()
+    for target in backup_targets(settings):
+        destination = str(Path(target.destination).expanduser().resolve())
+        if destination in seen_destinations:
+            continue
+        seen_destinations.add(destination)
+        removed_count += remove_missing_backup_hash_entries(destination)
+    return removed_count
+
+
+def resolve_tracked_items(pattern: str) -> list[Path]:
     paths = [Path(item) for item in glob.glob(pattern)]
-    return sorted(path for path in paths if path.is_file())
+    return sorted(path for path in paths if path.is_file() or path.is_dir())
 
 
 def sha256_file(path: Path) -> str:
@@ -135,6 +179,29 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def iter_directory_files(path: Path) -> list[Path]:
+    return sorted(child for child in path.rglob("*") if child.is_file())
+
+
+def sha256_directory(path: Path) -> str:
+    digest = hashlib.sha256()
+    for child in iter_directory_files(path):
+        relative = child.relative_to(path).as_posix().encode("utf-8")
+        digest.update(relative)
+        digest.update(b"\0")
+        with child.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def sha256_item(path: Path) -> str:
+    if path.is_dir():
+        return sha256_directory(path)
+    return sha256_file(path)
 
 
 def timestamp_for_filename(file_mtime: datetime) -> str:
@@ -159,6 +226,36 @@ def unique_destination_path(
     raise RuntimeError(f"Could not create a unique destination name for {source_name}")
 
 
+def item_size(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(child.stat().st_size for child in iter_directory_files(path))
+
+
+def item_modified_at(path: Path) -> datetime:
+    if path.is_dir():
+        child_timestamps = [child.stat().st_mtime for child in iter_directory_files(path)]
+        if child_timestamps:
+            return datetime.fromtimestamp(max(child_timestamps))
+    return datetime.fromtimestamp(path.stat().st_mtime)
+
+
+def backup_source_name(source: Path) -> str:
+    if source.is_dir():
+        return f"{source.name}.zip"
+    return source.name
+
+
+def copy_item(source: Path, backup_path: Path) -> None:
+    if source.is_file():
+        shutil.copy2(source, backup_path)
+        return
+
+    with zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for child in iter_directory_files(source):
+            archive.write(child, child.relative_to(source))
+
+
 def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.2f} MB"
 
@@ -170,50 +267,54 @@ def sync_files(
 ) -> SyncResult:
     now = now or datetime.now()
     result = SyncResult()
-    destination = Path(settings.destination).expanduser().resolve()
-    destination.mkdir(parents=True, exist_ok=True)
-
-    entries, known_hashes = load_hash_entries(destination)
     size_limit_bytes = 0
     if settings.size_limit_mb > 0:
         size_limit_bytes = int(settings.size_limit_mb * 1024 * 1024)
 
-    candidates = resolve_tracked_files(settings.tracked)
-    for source in candidates:
-        try:
-            source_stat = source.stat()
-            modified_at = datetime.fromtimestamp(source_stat.st_mtime)
-            if last_period_started_at is not None:
-                if modified_at <= last_period_started_at:
+    for target in backup_targets(settings):
+        destination = Path(target.destination).expanduser().resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+
+        entries, known_hashes = load_hash_entries(destination)
+        candidates = resolve_tracked_items(target.tracked)
+        for source in candidates:
+            try:
+                modified_at = item_modified_at(source)
+                if last_period_started_at is not None:
+                    if modified_at <= last_period_started_at:
+                        continue
+
+                size_bytes = item_size(source)
+                if size_limit_bytes and size_bytes >= size_limit_bytes:
+                    result.errors.append(
+                        f"{source}: file size {format_file_size(size_bytes)} hit the "
+                        f"{settings.size_limit_mb:g} MB limit; skipped"
+                    )
                     continue
 
-            size_bytes = source_stat.st_size
-            if size_limit_bytes and size_bytes >= size_limit_bytes:
-                result.errors.append(
-                    f"{source}: file size {format_file_size(size_bytes)} hit the "
-                    f"{settings.size_limit_mb:g} MB limit; skipped"
+                file_hash = sha256_item(source)
+                if file_hash in known_hashes:
+                    continue
+
+                backup_path = unique_destination_path(
+                    destination,
+                    backup_source_name(source),
+                    modified_at,
                 )
-                continue
+                copy_item(source, backup_path)
+                entry = {
+                    "hash": file_hash,
+                    "original": str(source),
+                    "backup": str(backup_path),
+                    "copied_at": now.isoformat(timespec="seconds"),
+                }
+                entries.append(entry)
+                known_hashes.add(file_hash)
+                result.synced_count += 1
+            except Exception as exc:
+                result.errors.append(f"{source}: {exc}")
 
-            file_hash = sha256_file(source)
-            if file_hash in known_hashes:
-                continue
-
-            backup_path = unique_destination_path(destination, source.name, modified_at)
-            shutil.copy2(source, backup_path)
-            entry = {
-                "hash": file_hash,
-                "original": str(source),
-                "backup": str(backup_path),
-                "copied_at": now.isoformat(timespec="seconds"),
-            }
-            entries.append(entry)
-            known_hashes.add(file_hash)
-            result.synced_count += 1
-        except Exception as exc:
-            result.errors.append(f"{source}: {exc}")
-
-    write_hash_entries(destination, entries)
+        write_hash_entries(destination, entries)
     return result
 
 

@@ -2,7 +2,7 @@
 
 `periodic-file-backup` is a small Windows GUI app for periodically backing up tiny files.
 
-It watches files matched by a glob pattern, copies new file contents into a destination folder, and avoids duplicate backups by hashing file contents. It is built with Python `tkinter`.
+It watches files or folders matched by glob patterns, backs each target up to its paired destination folder, and avoids duplicate backups by hashing contents. It is built with Python `tkinter`.
 
 ## Quick Start
 
@@ -14,18 +14,21 @@ dist\periodic-file-backup.exe
 
 On first launch, the setup window asks for:
 
-- `Tracked`: a glob pattern for files to back up, such as `C:\SomeFolder\prefix*`.
-- `Destination`: the folder where backups should be placed.
+- `Tracked`: a glob pattern for files or folders to back up, such as `C:\SomeFolder\prefix*`.
+- `Destination`: the paired folder where that tracked pattern's backups should be placed.
 - `Size Limit`: max file size in MB. Use `0` for no limit.
 - `Period`: minutes between checks.
+
+Use the `+` button in setup to add more tracked/destination pairs.
 
 The app syncs immediately after setup, then repeats on the configured period. Use `Sync Now` to manually run a sync.
 
 ## Files
 
 - `periodic-file-backup.settings` is stored beside the exe.
-- `periodic-file-backup.hashes` is stored in the destination folder.
+- `periodic-file-backup.hashes` is stored in each destination folder.
 - Backups are named `YYYY-MM-DD--HH-MM-SS--originalname`, using the original file's modified time.
+- Matched folders are zipped and backed up as `YYYY-MM-DD--HH-MM-SS--foldername.zip`.
 
 ## Build
 

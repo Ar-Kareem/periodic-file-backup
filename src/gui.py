@@ -13,11 +13,13 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from ctypes import wintypes
 
 from src.core import (
+    BackupTarget,
     Settings,
+    backup_targets,
     default_settings,
     is_settings_ready,
     load_settings,
-    remove_missing_backup_hash_entries,
+    remove_missing_backup_hash_entries_for_settings,
     save_settings,
     selected_folder_pattern,
     sync_files,
@@ -56,6 +58,23 @@ def truncate_to_width(value: str, max_width: int, font: tkfont.Font) -> str:
         else:
             high = mid - 1
     return value[:low] + ellipsis
+
+
+def target_value_summary(targets: list[BackupTarget], field: str) -> str:
+    if not targets:
+        return "Not initialized"
+    value = str(getattr(targets[0], field))
+    if len(targets) > 1:
+        value = f"{value} (+{len(targets) - 1} more)"
+    return value
+
+
+def target_tooltip_text(targets: list[BackupTarget]) -> str:
+    lines = []
+    for index, target in enumerate(targets, start=1):
+        lines.append(f"{index}. {target.tracked}")
+        lines.append(f"   -> {target.destination}")
+    return "\n".join(lines)
 
 
 class Tooltip:
@@ -413,6 +432,7 @@ class PeriodicFileBackupApp:
         self.period_var = tk.StringVar()
         self.full_tracked_value = ""
         self.full_destination_value = ""
+        self.target_tooltip_value = ""
         self.info_container: ttk.Frame | None = None
         self.pause_banner: tk.Label | None = None
         self.tracked_label: ttk.Label | None = None
@@ -437,7 +457,7 @@ class PeriodicFileBackupApp:
         self.root.after(1000, self.update_countdown)
 
         if is_settings_ready(self.settings):
-            remove_missing_backup_hash_entries(self.settings.destination)
+            remove_missing_backup_hash_entries_for_settings(self.settings)
             self.schedule_sync(0)
         else:
             self.root.after(100, self.open_setup)
@@ -534,7 +554,7 @@ class PeriodicFileBackupApp:
             row=0, column=1, sticky=tk.EW, pady=2
         )
         self.tracked_label.bind("<Configure>", self.update_display_values)
-        Tooltip(self.tracked_label, lambda: self.full_tracked_value)
+        Tooltip(self.tracked_label, lambda: self.target_tooltip_value)
         self.tracked_open_button = ttk.Button(
             container,
             text="Open",
@@ -549,7 +569,7 @@ class PeriodicFileBackupApp:
             row=1, column=1, sticky=tk.EW, pady=2
         )
         self.destination_label.bind("<Configure>", self.update_display_values)
-        Tooltip(self.destination_label, lambda: self.full_destination_value)
+        Tooltip(self.destination_label, lambda: self.target_tooltip_value)
         self.destination_open_button = ttk.Button(
             container,
             text="Open",
@@ -598,6 +618,7 @@ class PeriodicFileBackupApp:
         if not is_settings_ready(self.settings):
             self.full_tracked_value = "Not initialized"
             self.full_destination_value = "Not initialized"
+            self.target_tooltip_value = ""
             self.size_limit_var.set("Not initialized")
             self.period_var.set("Not initialized")
             self.update_open_button_states()
@@ -610,8 +631,10 @@ class PeriodicFileBackupApp:
             if self.settings.size_limit_mb == 0
             else f"{self.settings.size_limit_mb:g} MB"
         )
-        self.full_tracked_value = self.settings.tracked
-        self.full_destination_value = self.settings.destination
+        targets = backup_targets(self.settings)
+        self.full_tracked_value = target_value_summary(targets, "tracked")
+        self.full_destination_value = target_value_summary(targets, "destination")
+        self.target_tooltip_value = target_tooltip_text(targets)
         self.size_limit_var.set(size_limit)
         self.update_period_display()
         self.update_open_button_states()
@@ -818,12 +841,14 @@ class PeriodicFileBackupApp:
     def open_tracked_folder(self) -> None:
         if not is_settings_ready(self.settings):
             return
-        self.open_folder(Path(self.settings.tracked).expanduser().parent)
+        first_target = backup_targets(self.settings)[0]
+        self.open_folder(Path(first_target.tracked).expanduser().parent)
 
     def open_destination_folder(self) -> None:
         if not is_settings_ready(self.settings):
             return
-        self.open_folder(Path(self.settings.destination).expanduser())
+        first_target = backup_targets(self.settings)[0]
+        self.open_folder(Path(first_target.destination).expanduser())
 
     def open_setup(self) -> None:
         setup = tk.Toplevel(self.root)
@@ -831,35 +856,86 @@ class PeriodicFileBackupApp:
         self.set_window_icon(setup)
         setup.transient(self.root)
         setup.grab_set()
-        setup.minsize(640, 190)
+        setup.minsize(720, 260)
 
         current = self.settings if is_settings_ready(self.settings) else default_settings()
-        tracked = tk.StringVar(value=current.tracked)
-        destination = tk.StringVar(value=current.destination)
+        current_targets = backup_targets(current)
         size_limit = tk.StringVar(value=f"{current.size_limit_mb:g}")
         period = tk.StringVar(value=f"{current.period_minutes:g}")
+        target_rows: list[dict[str, object]] = []
 
         frame = ttk.Frame(setup, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="Tracked").grid(row=0, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(frame, textvariable=tracked).grid(row=0, column=1, sticky=tk.EW, pady=4)
-        ttk.Button(
-            frame,
-            text="Select Folder",
-            command=lambda: self.choose_tracked_folder(tracked),
-        ).grid(row=0, column=2, padx=(8, 0), pady=4)
+        targets_frame = ttk.Frame(frame)
+        targets_frame.grid(row=0, column=0, columnspan=4, sticky=tk.EW)
+        targets_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(frame, text="Destination").grid(row=1, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(frame, textvariable=destination).grid(
-            row=1, column=1, sticky=tk.EW, pady=4
+        def refresh_target_titles() -> None:
+            for index, row in enumerate(target_rows, start=1):
+                group = row["group"]
+                if isinstance(group, ttk.LabelFrame):
+                    group.configure(text=f"Backup target {index}")
+
+        def remove_target(row: dict[str, object]) -> None:
+            if len(target_rows) <= 1:
+                return
+            group = row["group"]
+            if isinstance(group, ttk.LabelFrame):
+                group.destroy()
+            target_rows.remove(row)
+            refresh_target_titles()
+
+        def add_target(target: BackupTarget | None = None) -> None:
+            target = target or BackupTarget()
+            group = ttk.LabelFrame(targets_frame)
+            group.pack(fill=tk.X, pady=(0, 8))
+            group.columnconfigure(1, weight=1)
+
+            tracked = tk.StringVar(value=target.tracked)
+            destination = tk.StringVar(value=target.destination)
+            row: dict[str, object] = {
+                "group": group,
+                "tracked": tracked,
+                "destination": destination,
+            }
+
+            ttk.Label(group, text="Tracked").grid(row=0, column=0, sticky=tk.W, padx=(8, 6), pady=(6, 3))
+            ttk.Entry(group, textvariable=tracked).grid(row=0, column=1, sticky=tk.EW, pady=(6, 3))
+            ttk.Button(
+                group,
+                text="Select Folder",
+                command=lambda: self.choose_tracked_folder(tracked),
+            ).grid(row=0, column=2, padx=(8, 6), pady=(6, 3))
+            if target_rows:
+                ttk.Button(
+                    group,
+                    text="🗑",
+                    width=3,
+                    command=lambda row=row: remove_target(row),
+                ).grid(row=0, column=3, padx=(0, 8), pady=(6, 3))
+
+            ttk.Label(group, text="Destination").grid(row=1, column=0, sticky=tk.W, padx=(8, 6), pady=(3, 6))
+            ttk.Entry(group, textvariable=destination).grid(row=1, column=1, sticky=tk.EW, pady=(3, 6))
+            ttk.Button(
+                group,
+                text="Select Folder",
+                command=lambda: self.choose_destination_folder(destination),
+            ).grid(row=1, column=2, padx=(8, 6), pady=(3, 6))
+
+            target_rows.append(row)
+            refresh_target_titles()
+
+        for target in current_targets:
+            add_target(target)
+
+        ttk.Button(frame, text="+", width=3, command=lambda: add_target()).grid(
+            row=1,
+            column=0,
+            sticky=tk.W,
+            pady=(0, 8),
         )
-        ttk.Button(
-            frame,
-            text="Select Folder",
-            command=lambda: self.choose_destination_folder(destination),
-        ).grid(row=1, column=2, padx=(8, 0), pady=4)
 
         ttk.Label(frame, text="Size Limit").grid(row=2, column=0, sticky=tk.W, pady=4)
         size_row = ttk.Frame(frame)
@@ -879,10 +955,20 @@ class PeriodicFileBackupApp:
             side=tk.RIGHT, padx=(8, 0)
         )
         def save() -> None:
+            parsed_targets = []
+            for row in target_rows:
+                tracked_var = row["tracked"]
+                destination_var = row["destination"]
+                if isinstance(tracked_var, tk.StringVar) and isinstance(destination_var, tk.StringVar):
+                    parsed_targets.append(
+                        BackupTarget(
+                            tracked=tracked_var.get(),
+                            destination=destination_var.get(),
+                        )
+                    )
             self.save_setup(
                 setup,
-                tracked.get(),
-                destination.get(),
+                parsed_targets,
                 size_limit.get(),
                 period.get(),
             )
@@ -907,8 +993,7 @@ class PeriodicFileBackupApp:
     def save_setup(
         self,
         setup: tk.Toplevel,
-        tracked: str,
-        destination: str,
+        targets: list[BackupTarget],
         size_limit: str,
         period: str,
     ) -> None:
@@ -919,12 +1004,20 @@ class PeriodicFileBackupApp:
             messagebox.showerror("Invalid setup", "Size limit and period must be numbers.")
             return
 
-        if not tracked.strip():
-            messagebox.showerror("Invalid setup", "Tracked is required.")
+        if not targets:
+            messagebox.showerror("Invalid setup", "At least one backup target is required.")
             return
-        if not destination.strip():
-            messagebox.showerror("Invalid setup", "Destination is required.")
-            return
+        cleaned_targets = []
+        for index, target in enumerate(targets, start=1):
+            tracked = target.tracked.strip()
+            destination = target.destination.strip()
+            if not tracked:
+                messagebox.showerror("Invalid setup", f"Tracked is required for target {index}.")
+                return
+            if not destination:
+                messagebox.showerror("Invalid setup", f"Destination is required for target {index}.")
+                return
+            cleaned_targets.append(BackupTarget(tracked=tracked, destination=destination))
         if parsed_size_limit < 0:
             messagebox.showerror("Invalid setup", "Size limit cannot be negative.")
             return
@@ -933,8 +1026,7 @@ class PeriodicFileBackupApp:
             return
 
         self.settings = Settings(
-            tracked=tracked.strip(),
-            destination=destination.strip(),
+            targets=cleaned_targets,
             size_limit_mb=parsed_size_limit,
             period_minutes=parsed_period,
         )

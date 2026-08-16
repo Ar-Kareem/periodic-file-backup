@@ -8,9 +8,9 @@ The app uses these files:
 
 - `periodic-file-backup.exe`: packaged app.
 - `periodic-file-backup.settings`: JSON settings file stored beside the `.exe`.
-- `periodic-file-backup.hashes`: JSON hash list stored inside the configured destination folder.
+- `periodic-file-backup.hashes`: JSON hash list stored inside each configured destination folder.
 
-No last-sync timestamp is saved to disk. The previous period start time exists only in memory while the app is running. When the app starts, the first sync treats all matching tracked files as eligible.
+No last-sync timestamp is saved to disk. The previous period start time exists only in memory while the app is running. When the app starts, the first sync treats all matching tracked items as eligible.
 
 ## Settings
 
@@ -18,8 +18,12 @@ Settings are stored as JSON:
 
 ```json
 {
-  "tracked": "",
-  "destination": "folder containing the exe by default",
+  "targets": [
+    {
+      "tracked": "",
+      "destination": "folder containing the exe by default"
+    }
+  ],
   "size_limit_mb": 10,
   "period_minutes": 5
 }
@@ -27,9 +31,10 @@ Settings are stored as JSON:
 
 Fields:
 
-- `tracked`: required glob pattern, for example `C:\Users\XXX\AppData\FolderA\FolderB\prefix*`.
-- `destination`: required backup folder. Defaults to the folder containing the app.
-- `size_limit_mb`: number of MB allowed per tracked file. Default is `10`. If `0`, there is no size limit. If a tracked file is at or above the limit, the app logs an error and skips it.
+- `targets`: required list of tracked/destination pairs.
+- `targets[].tracked`: required glob pattern, for example `C:\Users\XXX\AppData\FolderA\FolderB\prefix*`.
+- `targets[].destination`: required backup folder. The first default destination is the folder containing the app.
+- `size_limit_mb`: number of MB allowed per tracked item. Default is `10`. If `0`, there is no size limit. If a tracked file or folder is at or above the limit, the app logs an error and skips it.
 - `period_minutes`: number of minutes between syncs. Default is `5`.
 
 ## GUI
@@ -45,8 +50,11 @@ If settings are missing or incomplete, the fields show `Not initialized` and the
 
 The setup window contains:
 
-- `Tracked` text field with a `Select Folder` button in the same row.
-- `Destination` text field with a `Select Folder` button in the same row.
+- one or more visually grouped backup target blocks.
+- each target block contains a `Tracked` text field with a `Select Folder` button in the same row.
+- each target block contains a paired `Destination` text field with a `Select Folder` button in the same row.
+- a small `+` button between the target blocks and `Size Limit` that adds another Tracked/Destination pair.
+- extra target blocks have a trash button on the Tracked row to remove that target.
 - `Size Limit` numeric field with hardcoded `MB` label.
 - `Period` numeric field with hardcoded `minutes` label.
 
@@ -62,8 +70,8 @@ Below the info rows, the main window also has:
 - `Sync Now` button.
 - scrolling log textbox that always scrolls to the bottom.
 - shortened Tracked and Destination values ending in `...` when needed.
-- hover tooltips on the Tracked and Destination values showing the full path/pattern.
-- `Open` buttons beside Tracked and Destination that open those folders.
+- hover tooltips on the Tracked and Destination values showing all tracked/destination pairs.
+- `Open` buttons beside Tracked and Destination that open the first tracked folder and first destination folder.
 - a Period value that shows a live `(next in mm:ss)` countdown when a sync is scheduled.
 - a Period-row `Pause` / `Resume` button.
 - a paused mode that sets Period to `PAUSED`, disables manual sync, cancels scheduled syncs, and shows a clear red `PAUSED - BACKUPS ARE NOT RUNNING` banner.
@@ -87,15 +95,15 @@ Pause mode is runtime-only and defaults to resumed on app start. While paused, s
 For each sync:
 
 1. Log `sync started`.
-2. Load `periodic-file-backup.hashes` from the destination folder.
+2. For each target, load `periodic-file-backup.hashes` from that target's destination folder.
 3. Store all existing hashes in a Python `set` for O(1) membership checks.
-4. Resolve files using the configured glob pattern.
-5. Ignore directories.
+4. Resolve files and folders using the target's configured glob pattern.
+5. Matched directories are backed up as `.zip` files.
 6. If this is not the first in-memory sync, only consider files whose modified time is newer than the previous period start time.
 7. Skip files at or above `size_limit_mb`, unless the limit is `0`.
 8. Compute SHA-256 from file contents only.
 9. If the hash already exists, skip the file.
-10. Otherwise copy the file to the destination folder.
+10. Otherwise copy the file or zipped folder to the destination folder.
 11. Append a hash entry to the hash list.
 12. Write the updated hash list back to `periodic-file-backup.hashes`.
 13. If files were copied, log `x new files synced`.
@@ -107,6 +115,14 @@ YYYY-MM-DD--HH-MM-SS--originalname
 ```
 
 The timestamp comes from the original file's modified time, not the time the backup was copied.
+
+For matched folders, backup filenames use the same timestamp format and add `.zip` to the folder name:
+
+```text
+YYYY-MM-DD--HH-MM-SS--foldername.zip
+```
+
+The folder timestamp comes from the newest file inside the folder. Empty folders use the folder's own modified time.
 
 If that filename already exists, append a numeric suffix before the extension.
 
@@ -125,7 +141,9 @@ If that filename already exists, append a numeric suffix before the extension.
 ]
 ```
 
-The hash is based on file contents only. The original filename is not part of the hash.
+For files, the hash is based on file contents only. The original filename is not part of the hash.
+
+For folders, the hash is based on contained file contents plus each contained file's relative path.
 
 ## Logging
 
